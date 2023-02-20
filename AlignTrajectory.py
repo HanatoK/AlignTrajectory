@@ -22,8 +22,7 @@ class OptimalRotation:
         from numpy import array
         self.target_positions, self.target_center = OptimalRotation.bring_to_center(frame_data)
         matrix_F = OptimalRotation.build_matrix_F(pos_target=self.target_positions,
-                                                  pos_reference=self.reference_positions,
-                                                  num_atoms=self.num_atoms)
+                                                  pos_reference=self.reference_positions)
         # eigen value decomposition of F
         w, v = eigh(array(matrix_F))
         q = v[:, -1]
@@ -68,78 +67,86 @@ class OptimalRotation:
         return np.transpose(np.matmul(rotation_matrix, frame_data.T))
 
     @staticmethod
-    def build_matrix_F(pos_target, pos_reference, num_atoms):
-        F = [[0]*4 for _ in range(4)]
-        R11 = 0
-        R22 = 0
-        R33 = 0
-        R12 = 0
-        R13 = 0
-        R23 = 0
-        R21 = 0
-        R31 = 0
-        R32 = 0
-        for i in range(0, num_atoms):
-            R11 += pos_target[i][0] * pos_reference[i][0]
-            R22 += pos_target[i][1] * pos_reference[i][1]
-            R33 += pos_target[i][2] * pos_reference[i][2]
-            R12 += pos_target[i][0] * pos_reference[i][1]
-            R13 += pos_target[i][0] * pos_reference[i][2]
-            R23 += pos_target[i][1] * pos_reference[i][2]
-            R21 += pos_target[i][1] * pos_reference[i][0]
-            R31 += pos_target[i][2] * pos_reference[i][0]
-            R32 += pos_target[i][2] * pos_reference[i][1]
-        F[0][0] = R11 + R22 + R33
-        F[0][1] = R23 - R32
-        F[0][2] = R31 - R13
-        F[0][3] = R12 - R21
-        F[1][0] = F[0][1]
-        F[1][1] = R11 - R22 - R33
-        F[1][2] = R12 + R21
-        F[1][3] = R13 + R31
-        F[2][0] = F[0][2]
-        F[2][1] = F[1][2]
-        F[2][2] = -R11 + R22 - R33
-        F[2][3] = R23 + R32
-        F[3][0] = F[0][3]
-        F[3][1] = F[1][3]
-        F[3][2] = F[2][3]
-        F[3][3] = -R11 - R22 + R33
+    def build_matrix_F(pos_target, pos_reference):
+        mat_R = np.matmul(pos_target.T, pos_reference)
+        F00 = mat_R[0][0] + mat_R[1][1] + mat_R[2][2]
+        F01 = mat_R[1][2] - mat_R[2][1]
+        F02 = mat_R[2][0] - mat_R[0][2]
+        F03 = mat_R[0][1] - mat_R[1][0]
+        F10 = F01
+        F11 = mat_R[0][0] - mat_R[1][1] - mat_R[2][2]
+        F12 = mat_R[0][1] + mat_R[1][0]
+        F13 = mat_R[0][2] + mat_R[2][0]
+        F20 = F02
+        F21 = F12
+        F22 = -mat_R[0][0] + mat_R[1][1] - mat_R[2][2]
+        F23 = mat_R[1][2] + mat_R[2][1]
+        F30 = F03
+        F31 = F13
+        F32 = F23
+        F33 = -mat_R[0][0] - mat_R[1][1] + mat_R[2][2]
+        F = np.asarray([[F00, F01, F02, F03],
+                        [F10, F11, F12, F13],
+                        [F20, F21, F22, F23],
+                        [F30, F31, F32, F33]])
         return F
 
 
-def _test_rotation():
-    import pandas as pd
-    traj = pd.read_csv('../tests/example_rmsd_input.txt', delimiter=r'\s+', comment='#', header=None)
-    num_atoms = traj.shape[1] // 3
-    # rotated = None
-    for i in range(0, traj.shape[0] - 1):
-        reference_frame = traj.iloc[i].to_numpy().reshape(-1, 3)
+if __name__ == '__main__':
+    def _test_rotation():
+        import pandas as pd
+        reference = pd.read_csv('tests/reference_frame.txt', delimiter=r'\s+', comment='#', header=None)
+        traj = pd.read_csv('tests/example_rmsd_input.txt', delimiter=r'\s+', comment='#', header=None)
+        num_atoms = traj.shape[1] // 3
+        reference_frame = reference.iloc[0].to_numpy().reshape(-1, 3)
         rot = OptimalRotation(reference_frame)
-        for j in range(i + 1, traj.shape[0]):
-            target_frame = traj.iloc[j].to_numpy().reshape(-1, 3)
-            reference_frame_centered, _ = OptimalRotation.bring_to_center(reference_frame)
+        reference_frame_centered, _ = OptimalRotation.bring_to_center(reference_frame)
+        rmsds = []
+        for i in range(0, traj.shape[0]):
+            target_frame = traj.iloc[i].to_numpy().reshape(-1, 3)
             target_frame_centered, _ = OptimalRotation.bring_to_center(target_frame)
             rotated = rot.optimal_rotate(target_frame_centered)
             diff = rotated - reference_frame_centered
             rmsd = np.sqrt(np.sum(np.square(diff)) / num_atoms)
-            print(f'Optimal RMSD between frame {i:4d} and {j:4d} is {rmsd:15.12f}')
-    # print(rotated)
+            rmsds.append(rmsd)
+            print(f'Optimal RMSD between frame {i:4d} and reference is {rmsd:15.12f}')
+        # compare the results with those from Colvars
+        rmsds_colvars = pd.read_csv(
+            'tests/example_rmsd_colvars.txt',
+            delimiter=r'\s+', comment='#', header=None).iloc[:, 0].to_numpy()
+        rmsds = np.asarray(rmsds)
+        error = np.sqrt(np.mean(np.square(rmsds - rmsds_colvars)))
+        print(f'Error = {error}')
+        # print(rotated)
 
 
-def _test_optimal_rmsd():
-    import pandas as pd
-    traj = pd.read_csv('../tests/example_rmsd_input.txt', delimiter=r'\s+', comment='#', header=None)
-    num_atoms = traj.shape[1] // 3
-    for i in range(0, traj.shape[0] - 1):
-        reference_frame = traj.iloc[i].to_numpy().reshape(num_atoms, 3)
+    def _test_optimal_rmsd():
+        import pandas as pd
+        reference = pd.read_csv('tests/reference_frame.txt', delimiter=r'\s+', comment='#', header=None)
+        traj = pd.read_csv('tests/example_rmsd_input.txt', delimiter=r'\s+', comment='#', header=None)
+        num_atoms = traj.shape[1] // 3
+        reference_frame = reference.iloc[0].to_numpy().reshape(-1, 3)
         rot = OptimalRotation(reference_frame)
-        for j in range(i + 1, traj.shape[0]):
-            target_frame = traj.iloc[j].to_numpy().reshape(num_atoms, 3)
+        rmsds = []
+        for i in range(0, traj.shape[0]):
+            target_frame = traj.iloc[i].to_numpy().reshape(num_atoms, 3)
             rmsd = rot.optimal_rmsd(target_frame)
-            print(f'Optimal RMSD between frame {i:4d} and {j:4d} is {rmsd:15.12f}')
+            rmsds.append(rmsd)
+            print(f'Optimal RMSD between frame {i:4d} and reference is {rmsd:15.12f}')
+        # compare the results with those from Colvars
+        rmsds_colvars = pd.read_csv(
+            'tests/example_rmsd_colvars.txt',
+            delimiter=r'\s+', comment='#', header=None).iloc[:, 0].to_numpy()
+        rmsds = np.asarray(rmsds)
+        error = np.sqrt(np.mean(np.square(rmsds - rmsds_colvars)))
+        print(f'Error = {error}')
 
-
-if __name__ == '__main__':
-    _test_rotation()
-    _test_optimal_rmsd()
+    import argparse
+    parser = argparse.ArgumentParser(description='Reading a colvars traj file line by line test')
+    parser.add_argument('--test1', action='store_true', help='run rotation test')
+    parser.add_argument('--test2', action='store_true', help='run optimal RMSD test')
+    args = parser.parse_args()
+    if args.test1:
+        _test_rotation()
+    if args.test2:
+        _test_optimal_rmsd()
